@@ -12,6 +12,18 @@ client = pymongo.MongoClient(config['mongo']['connection_string'])
 db = client.get_database(config['mongo-testing']['db'])
 col_name = config['mongo-testing']['worduse_coll']
 
+
+def truncate(fl: float, n: int):
+    """Truncates/pads a float f to n decimal places without rounding"""
+    s = '{}'.format(fl)
+    if 'e' in s or 'E' in s:
+        return '{0:.{1}f}'.format(fl, n)
+    i, p, d = s.partition('.')
+    return '.'.join([i, (d + '0' * n)[:n]])
+
+
+# db[col_name].update_one({'_id': 'spiegel'}, {'$pull': {''}})
+
 # search terms (lower case all)
 search_terms = [
     'krise',
@@ -24,6 +36,19 @@ search_terms = [
     'ausgangsbeschränkung'
 ]
 
+search_sites = [
+    {
+        'url': 'https://www.spiegel.de/',
+        'name': 'spiegel',
+        'titleTag': 'title'
+    },
+    {
+        'url': 'https://www.faz.net/aktuell/',
+        'name': 'faz',
+        'titleTag': 'title'
+    }
+]
+
 
 class Site:
     def __init__(self, site_url: str, site_name=None):
@@ -34,6 +59,10 @@ class Site:
             self.name = site_name.lower()
         self.search = []
         self.html = self.get_site()
+        self.article_title_tag = 'title'
+
+    def set_article_title_tag(self, tag_name: str):
+        self.article_title_tag = tag_name
 
     @staticmethod
     def init_word_dict(search: list) -> dict:
@@ -44,12 +73,12 @@ class Site:
 
     @staticmethod
     def format_to_readable(inner_html_text: str) -> list:
-        word_list = inner_html_text.lower().replace('\n', ' ').split(' ')
+        word_list = inner_html_text.lower().replace('\n', ' ').replace('/', ' ').split(' ')
         return list(filter(None, word_list))
 
     def get_site(self):
-        site = requests.get(self.url).text
-        return BeautifulSoup(site, 'lxml')
+        site_ = requests.get(self.url).text
+        return BeautifulSoup(site_, 'lxml')
 
     def specifiy_search(self, srch: list):
         self.search = srch
@@ -64,7 +93,7 @@ class Site:
                     wrd_cnt[search_word] += 1
         return wrd_cnt
 
-    def get_frontpage_words(self) -> dict:
+    def get_page_words(self, is_main_page: bool) -> dict:
         """
         gets all content of main page (main url)
         :return:
@@ -74,7 +103,32 @@ class Site:
         for article in all_articles:
             frontpage_text += f'{article.text} '
             # article_name = article['aria-label']
-        return {'totalWords': self.search_words(frontpage_text)}
+        ret = {'totalWords': self.search_words(frontpage_text)}
+        if is_main_page:
+            ret['totalArticles'] = len(all_articles)
+        return ret
+
+    @staticmethod
+    def find_article_link(article, main_url: str):
+        article_tags = article.find_all('a')
+        for article_tag in article_tags:
+            try:
+                ret_url = article_tag['href']
+                if main_url in ret_url:
+                    return ret_url
+            except KeyError:
+                continue
+        return None
+
+    def get_article_name(self, article):
+        article_tags = article.find_all('a')
+        for article_tag in article_tags:
+            try:
+                art_name = article_tag[self.article_title_tag]
+                return art_name
+            except KeyError:
+                continue
+        return 'no title'
 
     def get_article_words(self, specific_articles=False) -> dict:
         """
@@ -82,64 +136,98 @@ class Site:
         :param specific_articles:
         :return:
         """
-        html = self.get_site().find_all('article')
+        html = self.html.find_all('article')
+        main_page_articles_total = len(html)
+        current_article_index = 0
         article_list = []
         for article in html:
-            article_name = article['aria-label']
-            try:
-                # print(article['aria-label'], article_name)
-                article_href = article.section.a['href']
-                time.sleep(0.1)
-                rec_article = Site(article_href, article_name)
-                rec_article.specifiy_search(self.search)
-                rec_html = rec_article.get_site().find_all('article')
+            current_article_index += 1
+            article_name = self.get_article_name(article)
+            # print(article['aria-label'], article_name)
+            current_status = f'{current_article_index}/{main_page_articles_total}  |  {truncate((current_article_index / main_page_articles_total)*100.0, 2)}% \t'
+            article_url = Site.find_article_link(article, main_url=self.url)
 
-                article_text = ''
-                for rec_rec_article in rec_html:
-                    article_text += f'{rec_rec_article.text} '
+            if not article_url:
+                print(current_status, f'could not find reference to article: \"{article_name}\"')
+                continue
 
-                result = rec_article.search_words(article_text)
-                rec_out = {'words': result, 'articleName': rec_article.name, 'articleLink': rec_article.url}
-                article_list.append(rec_out)
+            time.sleep(0.1)
+            rec_article = Site(article_url, article_name)
+            rec_article.specifiy_search(self.search)
 
-                print(rec_article.name, result)
-            except AttributeError:
-                print(f'could not get {article_name}')
+            result = rec_article.get_page_words(is_main_page=False)
+            result['articleName'] = rec_article.name
+            result['articleLink'] = rec_article.url
+            # TODO: Add number of words for each articles
+
+            article_list.append(result)
+
+            print(current_status, rec_article.url)
 
         total = self.init_word_dict(self.search)
         for article_info in article_list:
             for search_item in self.search:
-                if article_info['words'][search_item] == 0:
+                if article_info['totalWords'][search_item] == 0:
                     continue
-                total[search_item] += article_info['words'][search_item]
+                total[search_item] += article_info['totalWords'][search_item]
 
         ret = {
-            'totalWords': total
+            'totalWords': total,
+            'totalArticles': len(article_list)
         }
         if specific_articles:
             ret['articles'] = article_list
 
         return ret
 
+    def introduce_self(self):
+        return f'{self.name} | {self.url}'
 
-spiegel_search = Site('https://www.spiegel.de/')
-spiegel_search.specifiy_search(search_terms)
 
-search_word_struct = {
-    'createdAt': datetime.datetime.now(),
-    'mainPage': spiegel_search.get_frontpage_words(),
-    'mainPageArticles': spiegel_search.get_article_words()
-}
-db_struct = {
-    '_id': spiegel_search.name,
-    'url': spiegel_search.url,
-    'data': [],
-    'createdAt': datetime.datetime.now()
-}
-if db[col_name].count_documents({'_id': spiegel_search.name}) == 0:
-    db[col_name].insert_one(db_struct)
+for site_item in search_sites:
+    site = Site(site_item['url'], site_item['name'])
+    site.specifiy_search(search_terms)
+    # site.set_article_title_tag(site_item['titleTag'])
+    print(f'-> gathering data for {site.introduce_self()}')
 
-db[col_name].update_one(
-    {'_id': spiegel_search.name},
-    {'$push': {'data': search_word_struct}}
-)
+    search_word_struct = {
+        'createdAt': datetime.datetime.now(),
+        'mainPage': site.get_page_words(is_main_page=True),
+        'mainPageArticles': site.get_article_words()
+    }
+    db_struct = {
+        '_id': site.name,
+        'url': site.url,
+        'data': [],
+        'createdAt': datetime.datetime.now()
+    }
+
+    json_name = f'./backup/{site.name}_dump.json'
+    '''
+    with open(json_name, 'r') as f:
+        data = f.read()
+    '''
+
+    db_struct_cpy = db_struct.copy()
+    update_time = db_struct_cpy['createdAt']
+    update_time = f'ISODate({update_time.isoformat()})'
+    db_struct_cpy['createdAt'] = update_time
+    search_word_struct_cpy = search_word_struct.copy()
+    search_word_struct_cpy['createdAt'] = update_time
+    db_struct_cpy['data'].append(search_word_struct_cpy)
+    with open(json_name, 'w+', encoding='utf-8') as f:
+        json.dump(db_struct_cpy, f, ensure_ascii=False, indent=4)
+    print(f'saved backup file: {json_name}')
+
+    if db[col_name].count_documents({'_id': site.name}) == 0:
+        db[col_name].insert_one(db_struct)
+        print(f'created document for {site.name}')
+
+    db[col_name].update_one(
+        {'_id': site.name},
+        {'$push': {'data': search_word_struct}}
+    )
+    print(f'saved mongo document to {col_name}')
+
+# TODO: Save files to backup better
+# TODO: Prevent saving data twice within 12 hours
