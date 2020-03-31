@@ -5,6 +5,7 @@ import json
 import datetime
 import configparser
 import time
+import shutil
 
 config = configparser.ConfigParser()
 config.read('config.ini')
@@ -20,6 +21,37 @@ def truncate(fl: float, n: int):
         return '{0:.{1}f}'.format(fl, n)
     i, p, d = s.partition('.')
     return '.'.join([i, (d + '0' * n)[:n]])
+
+
+def print_progress_bar(iteration, total, prefix='', suffix='', usepercent=True, decimals=1, fill='█'):
+    """
+    Call in a loop to create terminal progress bar
+    @params:
+        iteration   - Required  : current iteration (Int)
+        total       - Required  : total iterations (Int)
+        prefix      - Optional  : prefix string (Str)
+        suffix      - Optional  : suffix string (Str)
+        usepercent  - Optoinal  : display percentage (Bool)
+        decimals    - Optional  : positive number of decimals in percent complete (Int), ignored if usepercent = False
+        length      - Optional  : character length of bar (Int)
+        fill        - Optional  : bar fill character (Str)
+    """
+    # length is calculated by terminal width
+    twx, twy = shutil.get_terminal_size()
+    length = twx - 1 - len(prefix) - len(suffix) - 4
+    if usepercent:
+        length = length - 6
+    filled_length = int(length * iteration // total)
+    bar = fill * filled_length + '-' * (length - filled_length)
+    # process percent
+    if usepercent:
+        percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+        print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end='', flush=True)
+    else:
+        print('\r%s |%s| %s' % (prefix, bar, suffix), end='', flush=True)
+    # Print New Line on Complete
+    if iteration == total:
+        print(flush=True)
 
 
 # db[col_name].update_one({'_id': 'spiegel'}, {'$pull': {''}})
@@ -144,25 +176,28 @@ class Site:
             current_article_index += 1
             article_name = self.get_article_name(article)
             # print(article['aria-label'], article_name)
-            current_status = f'{current_article_index}/{main_page_articles_total}  |  {truncate((current_article_index / main_page_articles_total)*100.0, 2)}% \t'
+            # current_status = f'{current_article_index}/{main_page_articles_total}  |  {truncate((current_article_index / main_page_articles_total) * 100.0, 2)}% \t'
             article_url = Site.find_article_link(article, main_url=self.url)
 
             if not article_url:
-                print(current_status, f'could not find reference to article: \"{article_name}\"')
-                continue
+                print(f'could not find reference to article: \"{article_name}\"')
+            else:
 
-            time.sleep(0.1)
-            rec_article = Site(article_url, article_name)
-            rec_article.specifiy_search(self.search)
+                time.sleep(0.1)
+                rec_article = Site(article_url, article_name)
+                rec_article.specifiy_search(self.search)
 
-            result = rec_article.get_page_words(is_main_page=False)
-            result['articleName'] = rec_article.name
-            result['articleLink'] = rec_article.url
-            # TODO: Add number of words for each articles
+                result = rec_article.get_page_words(is_main_page=False)
+                result['articleName'] = rec_article.name
+                result['articleLink'] = rec_article.url
+                # TODO: Add number of words for each articles
 
-            article_list.append(result)
+                article_list.append(result)
+                print(rec_article.url)
 
-            print(current_status, rec_article.url)
+            print_progress_bar(current_article_index, main_page_articles_total,
+                               prefix=f'{current_article_index}/{main_page_articles_total}')
+            print()
 
         total = self.init_word_dict(self.search)
         for article_info in article_list:
@@ -184,6 +219,7 @@ class Site:
         return f'{self.name} | {self.url}'
 
 
+continue_flag = ''
 for site_item in search_sites:
     site = Site(site_item['url'], site_item['name'])
     site.specifiy_search(search_terms)
@@ -219,15 +255,27 @@ for site_item in search_sites:
         json.dump(db_struct_cpy, f, ensure_ascii=False, indent=4)
     print(f'saved backup file: {json_name}')
 
-    if db[col_name].count_documents({'_id': site.name}) == 0:
-        db[col_name].insert_one(db_struct)
-        print(f'created document for {site.name}')
+    if continue_flag != 'yy':
+        print('continue saving to database? (y / n / yy = yes for all upcoming): ')
+        continue_flag = str(input()).lower()
+        if continue_flag == 'yy':
+            print('will save to database for all!')
 
-    db[col_name].update_one(
-        {'_id': site.name},
-        {'$push': {'data': search_word_struct}}
-    )
-    print(f'saved mongo document to {col_name}')
+    if continue_flag == 'y' or continue_flag == 'yy':
+        if db[col_name].count_documents({'_id': site.name}) == 0:
+            db[col_name].insert_one(db_struct)
+            print(f'created document for {site.name}')
+
+        db[col_name].update_one(
+            {'_id': site.name},
+            {'$push': {'data': search_word_struct}}
+        )
+        print(f'saved mongo document {site.name} to {col_name}')
+    else:
+        print('will not save to database')
+
+    time.sleep(3)
+    print()
 
 # TODO: Save files to backup better
 # TODO: Prevent saving data twice within 12 hours
