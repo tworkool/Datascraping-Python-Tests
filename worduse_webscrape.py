@@ -13,6 +13,10 @@ client = pymongo.MongoClient(config['mongo']['connection_string'])
 db = client.get_database(config['mongo-testing']['db'])
 col_name = config['mongo-testing']['worduse_coll']
 
+# db[col_name].update_one({'_id': 'spiegel'}, {'$set': {'updatedAt': datetime.datetime.now()}})
+# db[col_name].update_one({'_id': 'rbb'}, {'$set': {'updatedAt': datetime.datetime.now()}})
+# db[col_name].update_one({'_id': 'faz'}, {'$set': {'updatedAt': datetime.datetime.now()}})
+
 
 def truncate(fl: float, n: int):
     """Truncates/pads a float f to n decimal places without rounding"""
@@ -56,8 +60,13 @@ def print_progress_bar(iteration, total, prefix='', suffix='', usepercent=True, 
 
 # db[col_name].update_one({'_id': 'spiegel'}, {'$pull': {''}})
 
+with open('settings.json', 'r') as f:
+    settings = json.load(f)
+    search_terms = settings['search_terms']
+    search_sites = settings['search_sites']
+
 # search terms (lower case all)
-search_terms = [
+'''search_terms = [
     'krise',
     'corona',
     'trump',
@@ -79,7 +88,7 @@ search_sites = [
         'name': 'faz',
         'titleTag': 'title'
     }
-]
+]'''
 
 
 class Site:
@@ -109,8 +118,24 @@ class Site:
         return list(filter(None, word_list))
 
     def get_site(self):
-        site_ = requests.get(self.url).text
-        return BeautifulSoup(site_, 'lxml')
+        site_response = None
+        while not site_response:
+            try:
+                site_response = requests.get(self.url, timeout=15)
+                print(f'status code: {site_response.status_code}, response time(s): {site_response.elapsed.total_seconds()}')
+                site_response.close()
+                if site_response.status_code == 404:
+                    print('404 Error')
+                    return BeautifulSoup("", 'lxml')
+            except requests.exceptions.ConnectionError:
+                site_response = None
+                print('CONNECTION ERROR!, retry in 5 seconds')
+                time.sleep(5)
+            except requests.exceptions.ReadTimeout:
+                site_response = None
+                print('Read Timeout, retry in 2 seconds')
+                time.sleep(2)
+        return BeautifulSoup(site_response.text, 'lxml')
 
     def specifiy_search(self, srch: list):
         self.search = srch
@@ -145,8 +170,13 @@ class Site:
         article_tags = article.find_all('a')
         for article_tag in article_tags:
             try:
-                ret_url = article_tag['href']
-                if main_url in ret_url:
+                ret_url = str(article_tag['href'])
+                parse = ret_url.split('.')
+                if ret_url[0] == '/':
+                    ret_url = ret_url[1:]
+                    ret_url = main_url + ret_url
+                link_ending = parse[len(parse)-1]
+                if (link_ending == 'html' or link_ending == 'htm' or ('.' not in link_ending)) and (main_url in ret_url):
                     return ret_url
             except KeyError:
                 continue
@@ -219,23 +249,36 @@ class Site:
         return f'{self.name} | {self.url}'
 
 
+#test_site = Site('https://www.rbb24.de//politik/hintergrund/rbb24-social-media.html', 'rbb_test')
+#test_site.get_page_words(True)
+
 continue_flag = ''
 for site_item in search_sites:
-    site = Site(site_item['url'], site_item['name'])
+    now = datetime.datetime.now()
+    site_item_name = site_item['name']
+    site_item_url = site_item['url']
+    last_updated = db[col_name].find_one({'_id': site_item_name})['updatedAt']
+    if last_updated > (now - datetime.timedelta(hours=3)):
+        print(f'{site_item_name} was updated less than 3 hours ago: {last_updated}, please run again at {last_updated + datetime.timedelta(hours=3)}')
+        time.sleep(2)
+        continue
+    site = Site(site_item_url, site_item_name)
     site.specifiy_search(search_terms)
     # site.set_article_title_tag(site_item['titleTag'])
     print(f'-> gathering data for {site.introduce_self()}')
 
     search_word_struct = {
-        'createdAt': datetime.datetime.now(),
+        'createdAt': now,
         'mainPage': site.get_page_words(is_main_page=True),
         'mainPageArticles': site.get_article_words()
     }
+    now = datetime.datetime.now()
     db_struct = {
         '_id': site.name,
         'url': site.url,
         'data': [],
-        'createdAt': datetime.datetime.now()
+        'createdAt': now,
+        'updatedAt': now
     }
 
     json_name = f'./backup/{site.name}_dump.json'
@@ -248,6 +291,7 @@ for site_item in search_sites:
     update_time = db_struct_cpy['createdAt']
     update_time = f'ISODate({update_time.isoformat()})'
     db_struct_cpy['createdAt'] = update_time
+    db_struct_cpy['updatedAt'] = update_time
     search_word_struct_cpy = search_word_struct.copy()
     search_word_struct_cpy['createdAt'] = update_time
     db_struct_cpy['data'].append(search_word_struct_cpy)
@@ -268,7 +312,10 @@ for site_item in search_sites:
 
         db[col_name].update_one(
             {'_id': site.name},
-            {'$push': {'data': search_word_struct}}
+            {
+                '$push': {'data': search_word_struct},
+                '$set': {'updatedAt': now}
+            }
         )
         print(f'saved mongo document {site.name} to {col_name}')
     else:
