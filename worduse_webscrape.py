@@ -1,3 +1,10 @@
+"""
+Author: Oliver Tworkowski
+This script searches for words on a website which has <article> tags. This applies to almost all newspaper websites
+To add or remove websites and words to be searched for, modify the settings.json file
+"""
+
+
 import requests
 import pymongo
 from bs4 import BeautifulSoup
@@ -7,19 +14,17 @@ import configparser
 import time
 import shutil
 
-config = configparser.ConfigParser()
-config.read('config.ini')
+config = configparser.ConfigParser().read('config.ini')
 client = pymongo.MongoClient(config['mongo']['connection_string'])
 db = client.get_database(config['mongo-testing']['db'])
 col_name = config['mongo-testing']['worduse_coll']
 
-# db[col_name].update_one({'_id': 'spiegel'}, {'$set': {'updatedAt': datetime.datetime.now()}})
-# db[col_name].update_one({'_id': 'rbb'}, {'$set': {'updatedAt': datetime.datetime.now()}})
-# db[col_name].update_one({'_id': 'faz'}, {'$set': {'updatedAt': datetime.datetime.now()}})
 
-
+# Stackoverflow Solution
 def truncate(fl: float, n: int):
-    """Truncates/pads a float f to n decimal places without rounding"""
+    """
+    Truncates/pads a float f to n decimal places without rounding
+    """
     s = '{}'.format(fl)
     if 'e' in s or 'E' in s:
         return '{0:.{1}f}'.format(fl, n)
@@ -27,6 +32,7 @@ def truncate(fl: float, n: int):
     return '.'.join([i, (d + '0' * n)[:n]])
 
 
+# Stackoverflow Solution
 def print_progress_bar(iteration, total, prefix='', suffix='', usepercent=True, decimals=1, fill='█'):
     """
     Call in a loop to create terminal progress bar
@@ -58,40 +64,17 @@ def print_progress_bar(iteration, total, prefix='', suffix='', usepercent=True, 
         print(flush=True)
 
 
-# db[col_name].update_one({'_id': 'spiegel'}, {'$pull': {''}})
-
+# load settings file
 with open('settings.json', 'r') as f:
     settings = json.load(f)
     search_terms = settings['search_terms']
     search_sites = settings['search_sites']
 
-# search terms (lower case all)
-'''search_terms = [
-    'krise',
-    'corona',
-    'trump',
-    'pandemie',
-    'covid-19',
-    'putin',
-    'ausgangssperre',
-    'ausgangsbeschränkung'
-]
-
-search_sites = [
-    {
-        'url': 'https://www.spiegel.de/',
-        'name': 'spiegel',
-        'titleTag': 'title'
-    },
-    {
-        'url': 'https://www.faz.net/aktuell/',
-        'name': 'faz',
-        'titleTag': 'title'
-    }
-]'''
-
 
 class Site:
+    """
+    handle requests and website information
+    """
     def __init__(self, site_url: str, site_name=None):
         self.url = site_url
         if not site_name:
@@ -101,12 +84,30 @@ class Site:
         self.search = []
         self.html = self.get_site()
         self.article_title_tag = 'title'
+        self.is_mainpage = False
 
     def set_article_title_tag(self, tag_name: str):
+        """
+        provide the tag name inside the article tag if given (doesn't influence result if no title found)
+        :param tag_name:
+        :return:
+        """
         self.article_title_tag = tag_name
+
+    def set_as_mainpage(self):
+        """
+        sets the current instance as main page (front page of newspaper)
+        :return:
+        """
+        self.is_mainpage = True
 
     @staticmethod
     def init_word_dict(search: list) -> dict:
+        """
+        initiates a dict (probably obsolete)
+        :param search:
+        :return:
+        """
         word_dict = {}
         for w in search:
             word_dict[w] = 0
@@ -114,15 +115,25 @@ class Site:
 
     @staticmethod
     def format_to_readable(inner_html_text: str) -> list:
+        """
+        converts a whole article inner html text into a beautiful list of words :)
+        :param inner_html_text:
+        :return:
+        """
         word_list = inner_html_text.lower().replace('\n', ' ').replace('/', ' ').split(' ')
         return list(filter(None, word_list))
 
     def get_site(self):
+        """
+        gets website content and handles exceptions
+        :return:
+        """
         site_response = None
         while not site_response:
             try:
                 site_response = requests.get(self.url, timeout=15)
-                print(f'status code: {site_response.status_code}, response time(s): {site_response.elapsed.total_seconds()}')
+                print(
+                    f'status code: {site_response.status_code}, response time(s): {site_response.elapsed.total_seconds()}')
                 site_response.close()
                 if site_response.status_code == 404:
                     print('404 Error')
@@ -138,9 +149,19 @@ class Site:
         return BeautifulSoup(site_response.text, 'lxml')
 
     def specifiy_search(self, srch: list):
+        """
+        sets searchlist for this instance
+        :param srch:
+        :return:
+        """
         self.search = srch
 
     def search_words(self, inner_html_text: str) -> dict:
+        """
+        searches website for words
+        :param inner_html_text:
+        :return:
+        """
         wrd_cnt = self.init_word_dict(self.search)
         wrds = self.format_to_readable(inner_html_text)
 
@@ -150,9 +171,9 @@ class Site:
                     wrd_cnt[search_word] += 1
         return wrd_cnt
 
-    def get_page_words(self, is_main_page: bool) -> dict:
+    def get_page_words(self) -> dict:
         """
-        gets all content of main page (main url)
+        counts the words for a website that have been found
         :return:
         """
         all_articles = self.html.find_all('article')
@@ -161,28 +182,39 @@ class Site:
             frontpage_text += f'{article.text} '
             # article_name = article['aria-label']
         ret = {'totalWords': self.search_words(frontpage_text)}
-        if is_main_page:
+        if self.is_mainpage:
             ret['totalArticles'] = len(all_articles)
         return ret
 
     @staticmethod
     def find_article_link(article, main_url: str):
+        """
+        tries to find an article reference in article tag
+        :param article: BeautifulSoup Pageelement <article>
+        :param main_url: the main page url
+        :return:
+        """
         article_tags = article.find_all('a')
         for article_tag in article_tags:
             try:
                 ret_url = str(article_tag['href'])
                 parse = ret_url.split('.')
                 if ret_url[0] == '/':
-                    ret_url = ret_url[1:]
-                    ret_url = main_url + ret_url
-                link_ending = parse[len(parse)-1]
-                if (link_ending == 'html' or link_ending == 'htm' or ('.' not in link_ending)) and (main_url in ret_url):
+                    ret_url = main_url + ret_url[1:]
+                link_ending = parse[len(parse) - 1]
+                if (link_ending == 'html' or link_ending == 'htm' or ('.' not in link_ending)) and (
+                        main_url in ret_url):
                     return ret_url
             except KeyError:
                 continue
         return None
 
     def get_article_name(self, article):
+        """
+        tries to get the articles name
+        :param article: BeautifulSoup Pageelement <article> tag
+        :return:
+        """
         article_tags = article.find_all('a')
         for article_tag in article_tags:
             try:
@@ -204,9 +236,8 @@ class Site:
         article_list = []
         for article in html:
             current_article_index += 1
+
             article_name = self.get_article_name(article)
-            # print(article['aria-label'], article_name)
-            # current_status = f'{current_article_index}/{main_page_articles_total}  |  {truncate((current_article_index / main_page_articles_total) * 100.0, 2)}% \t'
             article_url = Site.find_article_link(article, main_url=self.url)
 
             if not article_url:
@@ -217,7 +248,7 @@ class Site:
                 rec_article = Site(article_url, article_name)
                 rec_article.specifiy_search(self.search)
 
-                result = rec_article.get_page_words(is_main_page=False)
+                result = rec_article.get_page_words()
                 result['articleName'] = rec_article.name
                 result['articleLink'] = rec_article.url
                 # TODO: Add number of words for each articles
@@ -227,6 +258,7 @@ class Site:
 
             print_progress_bar(current_article_index, main_page_articles_total,
                                prefix=f'{current_article_index}/{main_page_articles_total}')
+            # new line
             print()
 
         total = self.init_word_dict(self.search)
@@ -249,9 +281,6 @@ class Site:
         return f'{self.name} | {self.url}'
 
 
-#test_site = Site('https://www.rbb24.de//politik/hintergrund/rbb24-social-media.html', 'rbb_test')
-#test_site.get_page_words(True)
-
 continue_flag = ''
 for site_item in search_sites:
     now = datetime.datetime.now()
@@ -259,17 +288,19 @@ for site_item in search_sites:
     site_item_url = site_item['url']
     last_updated = db[col_name].find_one({'_id': site_item_name})['updatedAt']
     if last_updated > (now - datetime.timedelta(hours=3)):
-        print(f'{site_item_name} was updated less than 3 hours ago: {last_updated}, please run again at {last_updated + datetime.timedelta(hours=3)}')
+        print(
+            f'{site_item_name} was updated less than 3 hours ago: {last_updated}, please run again at {last_updated + datetime.timedelta(hours=3)}')
         time.sleep(2)
         continue
     site = Site(site_item_url, site_item_name)
     site.specifiy_search(search_terms)
+    site.set_as_mainpage()
     # site.set_article_title_tag(site_item['titleTag'])
     print(f'-> gathering data for {site.introduce_self()}')
 
     search_word_struct = {
         'createdAt': now,
-        'mainPage': site.get_page_words(is_main_page=True),
+        'mainPage': site.get_page_words(),
         'mainPageArticles': site.get_article_words()
     }
     now = datetime.datetime.now()
