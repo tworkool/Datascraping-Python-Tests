@@ -284,14 +284,20 @@ class Site:
 continue_flag = ''
 for site_item in search_sites:
     now = datetime.datetime.now()
-    site_item_name = site_item['name']
-    site_item_url = site_item['url']
+    site_item_name = None
+    site_item_url = ''
+    try:
+        site_item_name = site_item['name']
+        site_item_url = site_item['url']
+    except KeyError:
+        print('settings file keys cannot be found')
     last_updated = db[col_name].find_one({'_id': site_item_name})['updatedAt']
     if last_updated > (now - datetime.timedelta(hours=3)):
         print(
             f'{site_item_name} was updated less than 3 hours ago: {last_updated}, please run again at {last_updated + datetime.timedelta(hours=3)}')
         time.sleep(2)
         continue
+
     site = Site(site_item_url, site_item_name)
     site.specifiy_search(search_terms)
     site.set_as_mainpage()
