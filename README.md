@@ -6,7 +6,7 @@ This script searches for words on a website which has  `<article>` tags. This ap
     	"search_terms" : [
     		"word1",
     		"word2"
-	    ],
+	],
     	"search_sites" : [  
 	    	 {  
 		    	"url": "https://www.newspaper_mainpage.de/",  
