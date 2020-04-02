@@ -2,6 +2,7 @@ This script searches for words on a website which has  `<article>` tags. This ap
 
 **settings.json**
 
+'''json
     {
     	"search_terms" : [
     		"word1",
@@ -14,6 +15,7 @@ This script searches for words on a website which has  `<article>` tags. This ap
 	    	 },  
     	]
     }
+'''
 
 The search_terms list should all be lowercase, otherwise now words will be found.
 Words and websites can be added anytime.
