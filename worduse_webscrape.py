@@ -13,7 +13,6 @@ import configparser
 import time
 import shutil
 from os import system
-import random
 
 config = configparser.ConfigParser()
 config.read('config.ini')
@@ -71,82 +70,6 @@ with open('settings.json', 'r') as f:
     settings = json.load(f)
     search_terms = settings['search_terms']
     search_sites = settings['search_sites']
-
-
-def random_color():
-    rgb = [random.randrange(360), random.randrange(80, 100), random.randrange(80, 100)]
-    return f'hsv({rgb[0]},{rgb[1]},{rgb[2]})'
-
-
-print('display graph? (y/n): ')
-display_graph = input().lower()
-if display_graph == 'y':
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
-
-    data_query = list(db[col_name].find({}))
-    # fig = go.Figure()
-    titles = []
-    for doc in data_query:
-        titles.append(doc['_id'])
-    fig = make_subplots(rows=len(data_query), cols=1, subplot_titles=tuple(titles))
-
-    index = 0
-    colors_words = {}
-    for word in search_terms:
-        colors_words[word] = random_color()
-    for doc in data_query:
-        index += 1
-        data_x = []
-        for day in doc['data']:
-            data_x.append(day['createdAt'])
-        for search_word in search_terms:
-            data_y = []
-            for day in doc['data']:
-                word = None
-                try:
-                    word = day['mainPageArticles']['totalWords'][search_word]
-                except KeyError:
-                    pass
-                data_y.append(word)
-
-            fig.add_trace(
-                go.Scatter(
-                    x=data_x,
-                    y=data_y,
-                    name=search_word,
-                    line=dict(color=colors_words[search_word], width=3),
-                    mode='lines'
-                ),
-                row=index,
-                col=1,
-            )
-
-    fig.update_layout(
-        xaxis=dict(
-            showline=True,
-            showgrid=True,
-            showticklabels=True,
-            linecolor='rgb(204, 204, 204)',
-            linewidth=2,
-            ticks='outside',
-            tickfont=dict(
-                family='Arial',
-                size=12,
-                color='rgb(82, 82, 82)',
-            ),
-        ),
-        yaxis=dict(
-            showgrid=False,
-            zeroline=False,
-            showline=False,
-            showticklabels=False,
-        ),
-        plot_bgcolor='white'
-    )
-    fig.update_layout(xaxis={'type': 'date'})
-    # config = dict({'scrollZoom': True})
-    fig.show(config=config)
 
 
 class Site:
