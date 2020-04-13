@@ -1,4 +1,5 @@
 
+
 This script searches for words on a website which has  `<article>` tags. This applies to almost all newspaper websites. To add or remove websites and words to be searched for, modify the settings.json file
 
 **settings.json**
@@ -22,3 +23,7 @@ Words and websites can be added anytime.
 The name can also be left out. Then the main page name will be taken as name (in this case: newspaper_mainpage)
 
 The script prevents you from updating more than once within 3 hours from your last update
+
+**Plotting with Plotly**
+
+Run `plot_worduse.py` to plot all websites and save it as an html file 
