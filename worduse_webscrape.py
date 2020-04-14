@@ -66,7 +66,7 @@ def print_progress_bar(iteration, total, prefix='', suffix='', usepercent=True, 
 
 
 # load settings file
-with open('settings.json', 'r') as f:
+with open('settings.json', 'r', encoding='utf-8') as f:
     settings = json.load(f)
     search_terms = settings['search_terms']
     search_sites = settings['search_sites']
