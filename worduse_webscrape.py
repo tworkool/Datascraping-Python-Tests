@@ -284,8 +284,8 @@ class Site:
 
 
 continue_flag = ''
+now = datetime.datetime.now()
 for site_item in search_sites:
-    now = datetime.datetime.now()
     site_item_name = None
     site_item_url = ''
     try:
@@ -311,7 +311,6 @@ for site_item in search_sites:
         'mainPage': site.get_page_words(),
         'mainPageArticles': site.get_article_words()
     }
-    now = datetime.datetime.now()
     db_struct = {
         '_id': site.name,
         'url': site.url,
